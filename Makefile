@@ -36,3 +36,6 @@ clean:
 	rm -f $(SERVER_EXE) $(CLIENT_EXE) $(ADV_SERVER_EXE)
 
 .PHONY: all clean run-server run-client run-adv-server run-both
+
+
+# yes "This is a test line for large output. " | head -n 1000000

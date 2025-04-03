@@ -6,9 +6,9 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define BUFFER_SIZE 4096     // Buffer size for data transmission
-#define END_MARKER "##END##" // Marker to indicate the end of response
-#define PORT 8080            // Port number for the server
+#define INITIAL_BUFFER_SIZE 4096 // Initial buffer size
+#define PORT 8080                // Server port
+#define END_MARKER "##END##"     // Data end marker
 
 // Error handling function
 void error(const char *msg) {
@@ -16,112 +16,135 @@ void error(const char *msg) {
   exit(EXIT_FAILURE);
 }
 
+// Function to dynamically receive data from socket
+char *receive_dynamic_data(int sock) {
+  size_t buffer_size = INITIAL_BUFFER_SIZE;
+  char *buffer = malloc(buffer_size);
+  if (!buffer)
+    error("Memory allocation failed");
+
+  size_t total_received = 0;
+  ssize_t bytes_received;
+  char *end_marker_pos = NULL;
+
+  while (1) {
+    // If we don't have enough space, expand the buffer
+    if (total_received >= buffer_size - 1) {
+      buffer_size *= 2;
+      char *new_buffer = realloc(buffer, buffer_size);
+      if (!new_buffer) {
+        free(buffer);
+        error("Memory reallocation failed");
+      }
+      buffer = new_buffer;
+    }
+
+    // Receive data from socket
+    bytes_received = recv(sock, buffer + total_received,
+                          buffer_size - total_received - 1, 0);
+
+    if (bytes_received < 0) {
+      perror("recv failed");
+      free(buffer);
+      return NULL;
+    }
+    if (bytes_received == 0) {
+      printf("[!] Client disconnected\n");
+      free(buffer);
+      return NULL;
+    }
+
+    total_received += bytes_received;
+    buffer[total_received] = '\0'; // Ensure string termination
+
+    // Check for end marker
+    end_marker_pos = strstr(buffer, END_MARKER);
+    if (end_marker_pos) {
+      *end_marker_pos = '\0'; // Remove end marker
+      break;
+    }
+  }
+
+  // Shrink buffer to actual data size
+  char *final_buffer = realloc(buffer, strlen(buffer) + 1);
+  return final_buffer ? final_buffer : buffer;
+}
+
 int main() {
   int server_fd, client_sock;
   struct sockaddr_in server_addr, client_addr;
   socklen_t client_len = sizeof(client_addr);
-  char buffer[BUFFER_SIZE]; // Buffer to store received data
 
-  // Create socket for the server
+  // Create server socket
   if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     error("ERROR opening socket");
 
-  // Configure server address structure
+  // Configure server address
   memset(&server_addr, 0, sizeof(server_addr));
-  server_addr.sin_family = AF_INET; // Use IPv4
-  server_addr.sin_addr.s_addr =
-      INADDR_ANY;                     // Accept connections from any IP address
-  server_addr.sin_port = htons(PORT); // Set the port number
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_addr.s_addr = INADDR_ANY;
+  server_addr.sin_port = htons(PORT);
 
-  // Bind the socket to the address
+  // Bind socket to address
   if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
     error("ERROR on binding");
 
-  // Start listening for incoming connections (backlog set to 1)
+  // Start listening for incoming connections
   if (listen(server_fd, 1) < 0)
     error("ERROR on listen");
 
   printf("[+] Server started on port %d\n", PORT);
 
-  // Accept a client connection
+  // Accept client connection
   if ((client_sock =
            accept(server_fd, (struct sockaddr *)&client_addr, &client_len)) < 0)
     error("ERROR on accept");
 
-  // Convert client IP address to string format and display
+  // Display connected client's IP address
   char client_ip[INET_ADDRSTRLEN];
   inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
   printf("[+] Client connected: %s\n", client_ip);
-  printf("[!] exit\n");
+  printf("[!] Type 'exit' to quit\n");
 
-  // Main server loop for handling commands
   while (1) {
-    printf("%s $ ", client_ip); // Display the client IP address as prompt
+    printf("%s $ ", client_ip);
     fflush(stdout);
 
-    char
-        command[BUFFER_SIZE]; // Buffer to store the command entered by the user
-    if (!fgets(command, BUFFER_SIZE, stdin)) {
+    char command[INITIAL_BUFFER_SIZE];
+    if (!fgets(command, sizeof(command), stdin)) {
       printf("\n[!] Input error\n");
       break;
     }
 
-    command[strcspn(command, "\n")] =
-        '\0'; // Remove trailing newline from command
+    // Remove newline character
+    command[strcspn(command, "\n")] = '\0';
 
-    // If the command is 'exit', send it to the client and break the loop
+    // Exit if command is 'exit'
     if (strcmp(command, "exit") == 0) {
       send(client_sock, command, strlen(command), 0);
       break;
     }
 
-    // Send the command to the client
+    // Send command to client
     if (send(client_sock, command, strlen(command), 0) < 0) {
       perror("send failed");
       break;
     }
 
-    // Receive and display the output from the client
+    // Receive response from client dynamically
     printf("[Output]\n");
-    char response[BUFFER_SIZE * 10] = {
-        0}; // Larger buffer to store the response
-    size_t total_received = 0;
-
-    // Loop to receive the response from the client
-    while (1) {
-      memset(buffer, 0, BUFFER_SIZE); // Clear the buffer before receiving data
-      ssize_t bytes_received = recv(client_sock, buffer, BUFFER_SIZE - 1, 0);
-
-      if (bytes_received < 0) {
-        perror("recv failed");
-        break;
-      }
-      if (bytes_received == 0) {
-        printf("[!] Client disconnected\n");
-        goto cleanup; // Exit if the client disconnected
-      }
-
-      buffer[bytes_received] = '\0'; // Null-terminate the received data
-      strcat(response, buffer);      // Append the received data to the response
-      total_received += bytes_received;
-
-      // Check if END_MARKER is found in the response (indicates end of data)
-      if (strstr(buffer, END_MARKER)) {
-        char *end = strstr(response, END_MARKER);
-        if (end)
-          *end = '\0'; // Remove END_MARKER from the response
-        break;         // Exit loop if END_MARKER is found
-      }
+    char *response = receive_dynamic_data(client_sock);
+    if (response) {
+      printf("%s\n", response);
+      free(response);
+    } else {
+      break;
     }
-
-    // Print the complete response received from the client
-    printf("%s\n", response);
   }
 
-cleanup:
-  // Clean up resources
-  close(client_sock); // Close the client socket
-  close(server_fd);   // Close the server socket
+  // Close sockets
+  close(client_sock);
+  close(server_fd);
   printf("[+] Server stopped\n");
   return EXIT_SUCCESS;
 }
