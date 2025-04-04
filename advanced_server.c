@@ -283,7 +283,7 @@ void *admin_console(void *arg) {
         } else {
 
           char full_cmd[BUFFER_SIZE];
-          snprintf(full_cmd, BUFFER_SIZE, "%s\n", cmd); 
+          snprintf(full_cmd, BUFFER_SIZE, "%s\n", cmd);
           if (send(target->sock, full_cmd, strlen(full_cmd), 0) < 0) {
             perror("send failed");
             current_client_id = -1;
